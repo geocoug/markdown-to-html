@@ -1,0 +1,6 @@
+.git/
+.github/
+.venv/
+*cache*
+README.md
+.pre-commit-config.yaml
