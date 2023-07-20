@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 from pathlib import Path
 
 import requests
@@ -30,23 +29,29 @@ class MarkdownToHTML:
             theme (str): Theme for the output HTML (dark, light).
         """
         self.file = Path(file)
-        self.markdown = None
-        self.theme = theme
-        with open(
-            Path(self.asset_dir, "template.html"),
-            encoding=self.encoding,
-        ) as f:
-            self.template = f.read()
-        if self.theme not in self.themes:
-            raise ValueError("Theme not in list of valid options: ", self.theme)
         if not self.file.is_file():
             raise FileNotFoundError(self.file)
-        with open(
-            Path(self.asset_dir, f"{theme}.css"),
-            encoding=self.encoding,
-        ) as f:
-            self.css = f.read()
+        if theme not in self.themes:
+            raise ValueError("Theme not in list of valid options: ", self.theme)
+        self.markdown = None
+        self.theme = theme
+        self.template = Path(self.asset_dir, "template.html")
+        self.css = Path(self.asset_dir, f"{theme}.css")
         self.html = Path(self.file.parent, f"{self.file.stem}.html")
+
+    def read_file(self: MarkdownToHTML, file: Path) -> str:
+        """Read a file and return it's contents.
+
+        Args:
+        ----
+            file (Path): File path as a urllib.Path object.
+
+        Returns:
+        -------
+            str: File contents
+        """
+        with open(file, encoding=self.encoding) as f:
+            return f.read()
 
     def render(self: MarkdownToHTML) -> None:
         """Render the Markdown as HTML."""
@@ -62,9 +67,8 @@ class MarkdownToHTML:
                 "Content-Type": "application/json",
             },
         ).text
-
         update_tags = {
-            "{% STYLE %}": f"<style>{self.css}</style>",
+            "{% STYLE %}": f"<style>{self.read_file(self.css)}</style>",
             "{% THEME %}": f"""<div
             class="github-markdown-body"
             data-color-mode="{self.theme}"
@@ -73,37 +77,17 @@ class MarkdownToHTML:
         """,
             "{% CONTENT %}": html,
         }
+        template = self.read_file(self.template)
         for key, value in update_tags.items():
-            self.template = self.template.replace(key, value)
+            template = template.replace(key, value)
         with open(self.html, "w", encoding=self.encoding) as f:
-            f.write(self.template)
+            f.write(template)
         logger.info(f"Rendered HTML: {self.html}")
 
     def parse_markdown(self: MarkdownToHTML) -> None:
-        """Parse the markdown file and convert metadata to table format."""
+        """Read the markdown file."""
         with open(self.file, encoding=self.encoding) as f:
-            markdown = f.read()
-        metadata_pattern = re.compile(r"^---[\s\S]+?---")
-        yaml = re.findall(metadata_pattern, markdown)
-        markdown = re.sub(metadata_pattern, "", markdown)
-        if len(yaml) > 0:
-            yaml = yaml[0].split("\n")
-            metadata = {
-                key.split(":")[0].strip(): key.split(":")[-1].strip()
-                for key in yaml
-                if key != "---"
-            }
-            logger.info("Metadata detected")
-            max_chars = max(map(len, metadata)) + 1
-            for key in metadata:
-                n = max_chars - len(key)
-                padding = " " * n
-                logger.info(f"  {key}{padding}: {metadata[key]}")
-            headers = "|".join(metadata.keys())
-            sep = "--- |" * len(metadata.keys())
-            values = "|".join([metadata[key] for key in metadata])
-            markdown = f"{headers}\n{sep}\n{values}\n---\n{markdown}"
-        self.markdown = markdown
+            self.markdown = f.read()
 
 
 def send_request(method: str, url: str, **kwargs) -> requests.Response:  # noqa
