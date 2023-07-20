@@ -20,26 +20,36 @@ class MarkdownToHTML:
         Path(file).stem for file in os.listdir(asset_dir) if file != "template.html"
     ]
 
-    def __init__(self: MarkdownToHTML, file: str, theme: str) -> None:
+    def __init__(self: MarkdownToHTML, markdown_file: str, theme: str = "dark") -> None:
         """Convert Markdown to HTML with GitHub styling.
 
         Args:
         ----
-            file (str): Markdown file to convert.
+            markdown_file (str): Markdown file to convert.
             theme (str): Theme for the output HTML (dark, light).
         """
-        self.file = Path(file)
-        if not self.file.is_file():
-            raise FileNotFoundError(self.file)
+        self.markdown_file = Path(markdown_file)
+        if not self.markdown_file.is_file():
+            raise FileNotFoundError(self.markdown_file)
         if theme not in self.themes:
             raise ValueError("Theme not in list of valid options: ", self.theme)
-        self.markdown = None
+        self.markdown = self.read(self.markdown_file)
         self.theme = theme
-        self.template = Path(self.asset_dir, "template.html")
-        self.css = Path(self.asset_dir, f"{theme}.css")
-        self.html = Path(self.file.parent, f"{self.file.stem}.html")
+        self.template_file = Path(self.asset_dir, "template.html")
+        self.template = self.read(self.template_file)
+        self.css_file = Path(self.asset_dir, f"{theme}.css")
+        self.css = self.read(self.css_file)
+        self.html_file = Path(
+            self.markdown_file.parent,
+            f"{self.markdown_file.stem}.html",
+        )
+        self.html = None
 
-    def read_file(self: MarkdownToHTML, file: Path) -> str:
+    def __repr__(self: MarkdownToHTML) -> str:
+        """MarkdownToHTML instance representation."""
+        return f"{self.__class__.__name__}(markdown_file={self.markdown_file}, theme={self.theme})"  # noqa
+
+    def read(self: MarkdownToHTML, file: Path) -> str:
         """Read a file and return it's contents.
 
         Args:
@@ -50,13 +60,18 @@ class MarkdownToHTML:
         -------
             str: File contents
         """
-        with open(file, encoding=self.encoding) as f:
-            return f.read()
+        if not isinstance(file, Path):
+            raise TypeError(f"{file} not of type urllib.Path.")
+        try:
+            with open(file, encoding=self.encoding) as f:
+                return f.read()
+        except (FileExistsError, FileNotFoundError, OSError) as err:
+            logger.exception(err)
+            raise err
 
-    def render(self: MarkdownToHTML) -> None:
-        """Render the Markdown as HTML."""
-        self.parse_markdown()
-        html = send_request(
+    def markdown_to_html(self: MarkdownToHTML) -> MarkdownToHTML:
+        """Convert Markdown to HTML using the GitHub API."""
+        self.html = send_request(
             method="POST",
             url="https://api.github.com/markdown",
             json={
@@ -67,27 +82,28 @@ class MarkdownToHTML:
                 "Content-Type": "application/json",
             },
         ).text
+        return self
+
+    def render(self: MarkdownToHTML) -> MarkdownToHTML:
+        """Render the Markdown as HTML."""
+        if not self.html:
+            self.markdown_to_html()
         update_tags = {
-            "{% STYLE %}": f"<style>{self.read_file(self.css)}</style>",
+            "{% STYLE %}": f"<style>{self.css}</style>",
             "{% THEME %}": f"""<div
             class="github-markdown-body"
             data-color-mode="{self.theme}"
             data-dark-theme="{self.theme}"
             data-light-theme="{self.theme}">
         """,
-            "{% CONTENT %}": html,
+            "{% CONTENT %}": self.html,
         }
-        template = self.read_file(self.template)
         for key, value in update_tags.items():
-            template = template.replace(key, value)
-        with open(self.html, "w", encoding=self.encoding) as f:
-            f.write(template)
-        logger.info(f"Rendered HTML: {self.html}")
-
-    def parse_markdown(self: MarkdownToHTML) -> None:
-        """Read the markdown file."""
-        with open(self.file, encoding=self.encoding) as f:
-            self.markdown = f.read()
+            self.template = self.template.replace(key, value)
+        with open(self.html_file, "w", encoding=self.encoding) as f:
+            f.write(self.template)
+        logger.info(f"Complete: {self.markdown_file} -> {self.html_file}")
+        return self
 
 
 def send_request(method: str, url: str, **kwargs) -> requests.Response:  # noqa
@@ -145,4 +161,4 @@ if __name__ == "__main__":
     args = clparser().parse_args()
     if args.verbose:
         logger.addHandler(logging.StreamHandler())
-    MarkdownToHTML(file=args.markdown_file, theme=args.theme).render()
+    MarkdownToHTML(markdown_file=args.markdown_file, theme=args.theme).render()
